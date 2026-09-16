@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spider-Man: No Way Home - Terminal Multiverse</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050510; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; }
+        #ui { position: absolute; top: 20px; left: 20px; color: white; text-shadow: 2px 2px 4px #000; pointer-events: none; }
+        h1 { margin: 0 0 5px 0; font-size: 24px; color: #ff2e2e; letter-spacing: 2px; }
+        .bar-container { width: 200px; height: 15px; background: #333; border: 2px solid #fff; border-radius: 5px; margin-bottom: 8px; overflow: hidden; }
+        #hp-bar { width: 100%; height: 100%; background: #ff2e2e; transition: width 0.1s; }
+        #boss-hp-bar { width: 100%; height: 100%; background: #2eff35; transition: width 0.1s; }
+        #controls { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.7); font-size: 14px; text-align: center; pointer-events: none; background: rgba(0,0,0,0.5); padding: 10px 20px; border-radius: 10px; }
+        #game-over { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; text-align: center; display: none; background: rgba(0,0,0,0.85); padding: 40px; border-radius: 15px; border: 3px solid #ff2e2e; z-index: 100; }
+        button { background: #ff2e2e; color: white; border: none; padding: 10px 20px; font-size: 16px; cursor: pointer; border-radius: 5px; font-weight: bold; margin-top: 15px; pointer-events: auto; }
+        button:hover { background: #cc1b1b; }
+    </style>
+    <!-- Three.js CDN (Fixed) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.186.0/three.min.js"></script>
+</head>
+<body>
+
+    <div id="ui">
+        <h1>SPIDER-MAN</h1>
+        <div>Player HP:</div>
+        <div class="bar-container"><div id="hp-bar"></div></div>
+        <div id="boss-title" style="color:#2eff35; font-weight:bold; margin-top:10px;">GREEN GOBLIN HP:</div>
+        <div class="bar-container"><div id="boss-hp-bar"></div></div>
+    </div>
+
+    <div id="controls">
+        <b>[A / D]</b> Move Left/Right &nbsp;|&nbsp; <b>[SPACEBAR]</b> Web Attack &nbsp;|&nbsp; <b>[W]</b> Dodge/Jump
+    </div>
+
+    <div id="game-over">
+        <h2 id="win-lose-text" style="font-size: 32px; margin: 0;">GAME OVER</h2>
+        <button onclick="resetGame()">PLAY AGAIN</button>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script>
+        // --- Engine & Scene Setup ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0a0a1a);
+        scene.fog = new THREE.FogExp2(0x0a0a1a, 0.015);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        container.appendChild(renderer.domElement);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(10, 20, 15);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+        const neonLight = new THREE.PointLight(0x00a8ff, 2, 50);
+        neonLight.position.set(0, 5, 0);
+        scene.add(neonLight);
+
+        // --- Game World Entities ---
+        // Mirror Dimension / City Highway Platform
+        const groundGeo = new THREE.BoxGeometry(60, 2, 15);
+        const groundMat = new THREE.MeshStandardMaterial({ color: 0x22252a, roughness: 0.8 });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.position.y = -1;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Background City Towers (Procedural)
+        for(let i=0; i<25; i++) {
+            const h = 20 + Math.random() * 40;
+            const w = 5 + Math.random() * 5;
+            const bGeo = new THREE.BoxGeometry(w, h, w);
+            const bMat = new THREE.MeshStandardMaterial({ color: 0x111319, roughness: 0.9 });
+            const building = new THREE.Mesh(bGeo, bMat);
+            building.position.set((Math.random() - 0.5) * 100, h/2 - 2, -15 - Math.random()*20);
+            building.castShadow = true;
+            building.receiveShadow = true;
+            scene.add(building);
+        }
+
+        // 3D Spider-Man Primitive Model
+        const spideyGroup = new THREE.Group();
+        const headGeo = new THREE.SphereGeometry(0.6, 16, 16);
+        const redMat = new THREE.MeshStandardMaterial({ color: 0xcc1111, roughness: 0.5 });
+        const blueMat = new THREE.MeshStandardMaterial({ color: 0x1111cc, roughness: 0.5 });
+        const spideyHead = new THREE.Mesh(headGeo, redMat);
+        spideyHead.position.y = 2.2;
+        spideyHead.castShadow = true;
+        
+        const bodyGeo = new THREE.CylinderGeometry(0.5, 0.3, 1.4, 16);
+        const spideyBody = new THREE.Mesh(bodyGeo, blueMat);
+        spideyBody.position.y = 1.2;
+        spideyBody.castShadow = true;
+        
+        spideyGroup.add(spideyHead, spideyBody);
+        scene.add(spideyGroup);
+
+        // 3D Green Goblin Primitive Model
+        const goblinGroup = new THREE.Group();
+        const gobMat = new THREE.MeshStandardMaterial({ color: 0x11aa22, roughness: 0.4 });
+        const metalMat = new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.8 });
+        const gobHead = new THREE.Mesh(new THREE.SphereGeometry(0.6, 16, 16), gobMat);
+        gobHead.position.y = 2.2;
+        gobHead.castShadow = true;
+        const gobBody = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.4, 1.4, 16), gobMat);
+        gobBody.position.y = 1.2;
+        gobBody.castShadow = true;
+        
+        // Glider
+        const glider = new THREE.Mesh(new THREE.BoxGeometry(4, 0.2, 1.5), metalMat);
+        glider.position.y = 0.2;
+        glider.castShadow = true;
+        
+        goblinGroup.add(gobHead, gobBody, glider);
+        scene.add(goblinGroup);
+
+        // Projectiles groups
+        const webs = [];
+        const pumpkinBombs = [];
+
+        // --- Game State Variables ---
+        let player = { x: -8, y: 0, vx: 0, vy: 0, hp: 100, isGrounded: true };
+        let boss = { x: 8, y: 1.5, direction: 1, hp: 100, lastAttack: 0 };
+        let inputKeys = {};
+        let gameActive = true;
+
+        // Initial positions
+        spideyGroup.position.set(player.x, player.y, 0);
+        goblinGroup.position.set(boss.x, boss.y, 0);
+
+        // Camera setup
+        camera.position.set(0, 6, 14);
+        camera.lookAt(0, 2, 0);
+
+        // --- Input Event Listeners ---
+        window.addEventListener('keydown', (e) => { 
+            inputKeys[e.key.toLowerCase()] = true; 
+        });
+        
+        window.addEventListener('keyup', (e) => { 
+            inputKeys[e.key.toLowerCase()] = false; 
+            if(e.key === ' ') fireWeb();
+        });
+
+        function fireWeb() {
+            if(!gameActive) return;
+            const webGeo = new THREE.SphereGeometry(0.2, 8, 8);
+            const webMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const webMesh = new THREE.Mesh(webGeo, webMat);
+            webMesh.position.set(spideyGroup.position.x + 0.5, spideyGroup.position.y + 1.5, 0);
+            scene.add(webMesh);
+            webs.push(webMesh);
+        }
+
+        function spawnPumpkinBomb() {
+            const bombGeo = new THREE.SphereGeometry(0.25, 8, 8);
+            const bombMat = new THREE.MeshStandardMaterial({ color: 0xff7700, emissive: 0xff3300 });
+            const bombMesh = new THREE.Mesh(bombGeo, bombMat);
+            bombMesh.position.set(goblinGroup.position.x, goblinGroup.position.y + 0.5, 0);
+            bombMesh.castShadow = true;
+            scene.add(bombMesh);
+            pumpkinBombs.push(bombMesh);
+        }
+
+        // --- Reset Hook ---
+        window.resetGame = function() {
+            player.hp = 100;
+            boss.hp = 100;
+            player.x = -8;
+            boss.x = 8;
+            gameActive = true;
+            document.getElementById('game-over').style.display = 'none';
+            document.getElementById('hp-bar').style.width = '100%';
+            document.getElementById('boss-hp-bar').style.width = '100%';
+            
+            // Clear items
+            webs.forEach(w => scene.remove(w));
+            pumpkinBombs.forEach(b => scene.remove(b));
+            webs.length = 0;
+            pumpkinBombs.length = 0;
+        }
+
+        // --- Main Animation & Logic Loop ---
+        function animate(timestamp) {
+            requestAnimationFrame(animate);
+
+            if (gameActive) {
+                // 1. Player Physics & Input Handling
+                if (inputKeys['a']) player.vx = -0.15;
+                else if (inputKeys['d']) player.vx = 0.15;
+                else player.vx = 0;
+
+                if (inputKeys['w'] && player.isGrounded) {
+                    player.vy = 0.25;
+                    player.isGrounded = false;
+                }
+
+                // Apply Gravity
+                player.vy -= 0.012;
+                player.x += player.vx;
+                player.y += player.vy;
+
+                // Screen/Ground Boundaries
+                if (player.y <= 0) {
+                    player.y = 0;
+                    player.vy = 0;
+                    player.isGrounded = true;
+                }
+                player.x = Math.max(-25, Math.min(25, player.x));
+                spideyGroup.position.set(player.x, player.y, 0);
+
+                // Idle Animations
+                spideyGroup.rotation.y = player.x < boss.x ? 0 : Math.PI;
+
+                // 2. AI Boss Movement (Hovering Hoverboard Logic)
+                boss.x += 0.05 * boss.direction;
+                if (Math.abs(boss.x) > 18) boss.direction *= -1;
+                
+                // Hover sinusoidal wave
+                goblinGroup.position.x = boss.x;
+                goblinGroup.position.y = boss.y + Math.sin(timestamp * 0.003) * 0.4;
+
+                // AI Attack Pattern (Throws Bombs)
+                if (timestamp - boss.lastAttack > 1500) {
+                    spawnPumpkinBomb();
+                    boss.lastAttack = timestamp;
+                }
+
+                // 3. Projectile Updates & Collision Handlers
+                // Move Webs -> Hit Goblin
+                for (let i = webs.length - 1; i >= 0; i--) {
+                    webs[i].position.x += 0.3;
+                    
+                    // Check Hit
+                    if (webs[i].position.distanceTo(goblinGroup.position) < 1.5) {
+                        scene.remove(webs[i]);
+                        webs.splice(i, 1);
+                        boss.hp = Math.max(0, boss.hp - 8);
+                        document.getElementById('boss-hp-bar').style.width = boss.hp + '%';
+                        continue;
+                    }
+                    
+                    // Clean up bounds
+                    if (webs[i].position.x > 30) {
+                        scene.remove(webs[i]);
+                        webs.splice(i, 1);
+                    }
+                }
+
+                // Move Bombs -> Hit Spider-Man
+                for (let i = pumpkinBombs.length - 1; i >= 0; i--) {
+                    pumpkinBombs[i].position.x -= 0.18;
+                    pumpkinBombs[i].position.y -= 0.02;
+                    
+                    if (pumpkinBombs[i].position.distanceTo(spideyGroup.position) < 1.4) {
+                        scene.remove(pumpkinBombs[i]);
+                        pumpkinBombs.splice(i, 1);
+                        player.hp = Math.max(0, player.hp - 15);
+                        document.getElementById('hp-bar').style.width = player.hp + '%';
+                        continue;
+                    }
+                    
+                    if (pumpkinBombs[i].position.y < -1 || pumpkinBombs[i].position.x < -30) {
+                        scene.remove(pumpkinBombs[i]);
+                        pumpkinBombs.splice(i, 1);
+                    }
+                }
+
+                // 4. Win/Loss Evaluation
+                if (player.hp <= 0) {
+                    gameActive = false;
+                    document.getElementById('win-lose-text').innerText = "YOU WERE DEFEATED!";
+                    document.getElementById('game-over').style.display = 'block';
+                } else if (boss.hp <= 0) {
+                    gameActive = false;
+                    document.getElementById('win-lose-text').innerText = "MULTIVERSE SAVED! GOBLIN DEFEATED!";
+                    document.getElementById('game-over').style.display = 'block';
+                }
+
+                // Camera smoothly tracks player mid-point
+                camera.position.x = THREE.MathUtils.lerp(camera.position.x, player.x * 0.5, 0.05);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Start engine
+        requestAnimationFrame(animate);
+
+        // Window resize adapter
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
